@@ -8,12 +8,13 @@ from typing import Any
 
 MILLISECONDS_PER_DAY = 86_400_000
 
-# Default tank capacity (ml) per known vacuum model, ported from the card's
-# CALIBRATION_DATA so the sensor knows capacity from the device model WITHOUT
-# any manual calibration. The key matches the auto-detected brand_profile and
-# the vacuum entity_id slug (e.g. vacuum.roborock_s8_maxv_ultra). The generic
+# Default tank capacity (ml) per known vacuum model. Resolved automatically
+# via the vacuum's real HA device registry entry (manufacturer + model —
+# see tick.py::_resolve_default_tank_ml), with a fallback match against a
+# manually-set brand_profile or the vacuum entity_id slug (e.g.
+# vacuum.roborock_s8_maxv_ultra) for older/manual configs. The generic
 # profile is intentionally excluded: an unrecognised model stays "unknown"
-# instead of reporting a misleading percentage, mirroring the card's water calc.
+# instead of reporting a misleading percentage.
 DEFAULT_TANK_ML: dict[str, float] = {
     "roborock_s8_maxv_ultra": 3000,
     "roborock_s8_pro_ultra": 3500,

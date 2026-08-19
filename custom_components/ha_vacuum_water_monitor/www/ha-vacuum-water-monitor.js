@@ -1,4 +1,4 @@
-/* HA Vacuum Water Monitor v5.1.12 — HACS integration bundled card */
+/* HA Vacuum Water Monitor v5.1.13 — HACS integration bundled card */
 (function() {
 'use strict';
 
@@ -1800,13 +1800,28 @@ class HAVacuumWaterMonitor extends HTMLElement {
     ];
     keys.forEach(k => { if (this._config[k] != null) single[k] = this._config[k]; });
     if (Object.keys(single).length === 0) {
+      // Auto-detected fields (water_total_ml, brand_profile, status_sensor,
+      // area_sensor, etc.) are resolved server-side and persisted into
+      // configured_devices (see tick.py::async_ensure_auto_config). Without
+      // merging them in here, a purely auto-discovered device would render
+      // as a bare {vacuum_entity, name, icon} and always show "unknown
+      // capacity" / no water tracking, even after the backend had already
+      // resolved a real capacity for it.
+      const configuredByEntity = {};
+      ((this._serverState && this._serverState.settings && this._serverState.settings.configured_devices) || []).forEach(d => {
+        if (d && d.vacuum_entity) configuredByEntity[d.vacuum_entity] = d;
+      });
       const serverDevices = (this._userDevices && this._userDevices.length)
         ? this._userDevices
-        : (this._discoveredVacuums || []).map(v => ({
-            vacuum_entity: v.entity_id,
-            name: v.name || v.entity_id,
-            icon: '\uD83E\uDD16',
-          }));
+        : (this._discoveredVacuums || []).map(v => {
+            const cfg = configuredByEntity[v.entity_id] || {};
+            return {
+              icon: '\uD83E\uDD16',
+              ...cfg,
+              vacuum_entity: v.entity_id,
+              name: cfg.name || v.name || v.entity_id,
+            };
+          });
       return serverDevices.map(d => {
         if (d.brand_profile && BRAND_PROFILES[d.brand_profile]) {
           return { ...BRAND_PROFILES[d.brand_profile], ...d };

@@ -28,7 +28,7 @@ from .const import (
     signal_vacuum_water_updated,
 )
 from .storage import VacuumWaterStorage
-from .tick import async_tick_water_state
+from .tick import async_ensure_auto_config, async_tick_water_state
 from .websocket_api import async_register_commands
 
 _LOGGER = logging.getLogger(__name__)
@@ -191,6 +191,7 @@ def _async_start_tick(
 
     async def _tick(now=None) -> None:
         try:
+            config_changed = await async_ensure_auto_config(hass, storage)
             changed = await async_tick_water_state(hass, storage)
         except Exception as err:  # noqa: BLE001
             _LOGGER.exception("Water state tick failed: %s", err)
@@ -202,6 +203,18 @@ def _async_start_tick(
                 {"tank_states": changed},
             )
             hass.bus.async_fire(EVENT_STATE_CHANGED, {"tank_states": changed})
+        if config_changed:
+            # Auto-detection resolved new capacity/companion entities for at
+            # least one vacuum. Notify sensors (they re-read storage fresh)
+            # and any open card (via the settings payload, so it doesn't
+            # need a page reload to pick up newly-resolved capacity).
+            fresh_settings = (await storage.async_get_state())["settings"]
+            async_dispatcher_send(
+                hass,
+                signal_vacuum_water_updated(entry_id),
+                {"settings": fresh_settings},
+            )
+            hass.bus.async_fire(EVENT_STATE_CHANGED, {"settings": fresh_settings})
 
     bucket[DATA_TICK_UNSUB] = async_track_time_interval(
         hass, _tick, timedelta(seconds=DEFAULT_TICK_INTERVAL_SECONDS)

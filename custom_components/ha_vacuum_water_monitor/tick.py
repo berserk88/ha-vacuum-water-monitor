@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
+from .sensor_calculations import DEFAULT_TANK_ML
 from .storage import VacuumWaterStorage
 
 MOP_WASH_STATES = {
@@ -32,6 +35,173 @@ DEFAULT_INTENSITY_FACTOR = {
 DEFAULT_WASH_VOLUME_ML = 150
 AREA_MIN_DELTA = 0.1
 RESET_COOLDOWN_SEC = 60
+
+# Companion-entity roles this integration needs for fully automatic
+# server-side accounting, and how to recognize them among the OTHER
+# entities that belong to the same HA device as the vacuum entity. Verified
+# against the official `roborock` core integration's entity set (Cleaning
+# area / Status / Mop mode / Mop intensity / Dock error sensors and
+# selects), which all live on the same device as the vacuum entity itself.
+# (domain, name-must-contain-any-of, name-must-not-contain-any-of)
+_COMPANION_ROLE_HINTS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
+    "status_sensor": ("sensor", ("status",), ("dock",)),
+    "area_sensor": ("sensor", ("cleaning area", "clean area"), ("total",)),
+    "mop_mode_entity": ("select", ("mop mode", "mop route"), ("intensity",)),
+    "mop_intensity_entity": ("select", ("mop intensity",), ()),
+    "dock_error_sensor": ("sensor", ("dock error",), ()),
+}
+
+
+async def async_ensure_auto_config(
+    hass: HomeAssistant, storage: VacuumWaterStorage
+) -> bool:
+    """Auto-detect tank capacity and companion helper entities (status,
+    cleaned area, mop mode/intensity, dock error) for every known vacuum,
+    and persist whatever isn't already manually configured.
+
+    This is what makes the integration's "no configuration needed" promise
+    actually true. Without it, capacity only resolves when a vacuum's
+    entity_id happens to literally match one of the hardcoded profile keys,
+    and server-side accounting only runs when the card's Settings tab has
+    been used to manually wire each helper entity — neither of which
+    happens during plain auto-discovery. Capacity is instead resolved from
+    the vacuum's real manufacturer/model (via HA's device registry), and
+    companion entities are found by locating other entities on the SAME
+    device whose name matches a known role (see _COMPANION_ROLE_HINTS).
+
+    Only fills in missing fields — anything already set (by the user, or by
+    a previous run of this function) is left untouched, so manual overrides
+    in the card's Settings tab always win. Returns True if anything was
+    actually written, so the caller can notify listeners.
+    """
+    stored = await storage.async_get_state()
+    settings = stored["settings"]
+
+    configured = {
+        item["vacuum_entity"]: dict(item)
+        for item in (settings.get("configured_devices") or [])
+        if isinstance(item, dict) and item.get("vacuum_entity")
+    }
+    user_devices = {
+        item["vacuum_entity"]: dict(item)
+        for item in (settings.get("user_devices") or [])
+        if isinstance(item, dict) and item.get("vacuum_entity")
+    }
+
+    changed = False
+    for vacuum in list_vacuums(hass):
+        entity_id = vacuum["entity_id"]
+        # user_devices shadows configured_devices entirely wherever both
+        # merges (build_vacuum_devices/_devices_to_tick) are used, so enrich
+        # whichever collection actually owns this vacuum; a brand-new
+        # auto-discovered vacuum gets a fresh configured_devices entry.
+        bucket = user_devices if entity_id in user_devices else configured
+        entry = bucket.get(entity_id)
+        is_new = entry is None
+        if is_new:
+            entry = {"vacuum_entity": entity_id, "name": vacuum["name"]}
+
+        before = dict(entry)
+        for role, value in _auto_detect_companions(hass, entity_id).items():
+            entry.setdefault(role, value)
+        if not entry.get("water_total_ml") and not entry.get("brand_profile"):
+            resolved_ml = _resolve_default_tank_ml(hass, entity_id)
+            if resolved_ml:
+                entry["water_total_ml"] = resolved_ml
+
+        if is_new or entry != before:
+            bucket[entity_id] = entry
+            changed = True
+
+    if not changed:
+        return False
+
+    await storage.async_set_settings(
+        {
+            "configured_devices": list(configured.values()),
+            "user_devices": list(user_devices.values()),
+        }
+    )
+    return True
+
+
+def _auto_detect_companions(
+    hass: HomeAssistant, vacuum_entity_id: str
+) -> dict[str, str]:
+    """Find companion entities belonging to the same HA device as the
+    vacuum, matched by name against _COMPANION_ROLE_HINTS. Only entities
+    that exist and currently have a state are returned, so a guess never
+    wires in a stale or removed entity."""
+    found: dict[str, str] = {}
+    try:
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get(vacuum_entity_id)
+        if entry is None or entry.device_id is None:
+            return found
+        candidates = er.async_entries_for_device(
+            ent_reg, entry.device_id, include_disabled_entities=False
+        )
+    except Exception:  # pragma: no cover - registries are always available in HA
+        return found
+
+    for role, (domain, must_any, must_not) in _COMPANION_ROLE_HINTS.items():
+        for candidate in candidates:
+            if candidate.domain != domain or candidate.entity_id == vacuum_entity_id:
+                continue
+            name = (candidate.name or candidate.original_name or "").lower()
+            if not name or not any(hint in name for hint in must_any):
+                continue
+            if any(bad in name for bad in must_not):
+                continue
+            if hass.states.get(candidate.entity_id) is None:
+                continue
+            found[role] = candidate.entity_id
+            break
+    return found
+
+
+def _resolve_default_tank_ml(
+    hass: HomeAssistant, vacuum_entity_id: str
+) -> float | None:
+    """Resolve a default tank capacity from the vacuum's own HA device
+    registry entry (manufacturer + model) instead of requiring the
+    entity_id to happen to match a hardcoded key. Returns None (shown as
+    "unknown capacity") if no confident match is found — the user can
+    still set capacity manually via the card's Settings tab."""
+    try:
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get(vacuum_entity_id)
+        if entry is None or entry.device_id is None:
+            return None
+        device = dr.async_get(hass).async_get(entry.device_id)
+        if device is None:
+            return None
+    except Exception:  # pragma: no cover - registries are always available in HA
+        return None
+
+    slug = _slugify(f"{device.manufacturer or ''} {device.model or ''}")
+    if not slug:
+        return None
+    if slug in DEFAULT_TANK_ML:
+        return DEFAULT_TANK_ML[slug]
+
+    # Fuzzy fallback: accept a known key only if every one of its tokens
+    # appears in the detected slug (handles extra words the integration may
+    # add, e.g. an internal product code) — never the other way round, to
+    # avoid a short/generic key matching too eagerly.
+    slug_tokens = set(slug.split("_"))
+    best_key, best_score = None, 0
+    for key in DEFAULT_TANK_ML:
+        key_tokens = set(key.split("_"))
+        if key_tokens <= slug_tokens and len(key_tokens) > best_score:
+            best_key, best_score = key, len(key_tokens)
+    # Require at least a brand token plus one model token so e.g. a bare
+    # "roborock" match on an unrecognised model can't win.
+    return DEFAULT_TANK_ML[best_key] if best_key and best_score >= 2 else None
+
+
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")
 
 
 async def async_tick_water_state(
