@@ -1,0 +1,75 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vacuum Water Monitor",
+        "description": "Sets the default low-water warning thresholds. After setup, add each vacuum from the integration's Configure menu.",
+        "data": {
+          "warning_threshold": "Low-water warning threshold",
+          "critical_threshold": "Critical-water threshold"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single instance of this integration is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vacuum Water Monitor",
+        "menu_options": {
+          "add_vacuum": "Add a vacuum to track",
+          "remove_vacuum": "Stop tracking a vacuum",
+          "thresholds": "Edit warning thresholds"
+        }
+      },
+      "add_vacuum": {
+        "title": "Add a vacuum",
+        "description": "Pick a vacuum entity to start tracking water usage for.",
+        "data": {
+          "vacuum_entity": "Vacuum"
+        }
+      },
+      "select_brand": {
+        "title": "Brand",
+        "description": "Pick the brand for {entity_id}. If a confident guess was possible it's pre-selected — otherwise pick 'Other / not listed' to enter capacity manually.",
+        "data": {
+          "brand": "Brand"
+        }
+      },
+      "select_model": {
+        "title": "Model",
+        "description": "Pick the {brand} model, or 'Other / custom capacity' to enter capacity manually.",
+        "data": {
+          "model": "Model"
+        }
+      },
+      "custom_capacity": {
+        "title": "Tank capacity",
+        "description": "Enter the mop water tank capacity in mL for this vacuum.",
+        "data": {
+          "water_total_ml": "Tank capacity"
+        }
+      },
+      "remove_vacuum": {
+        "title": "Stop tracking a vacuum",
+        "description": "This removes the vacuum's water-tracking entities and discards its tank history.",
+        "data": {
+          "vacuum_entity": "Vacuum"
+        }
+      },
+      "thresholds": {
+        "title": "Warning thresholds",
+        "data": {
+          "warning_threshold": "Low-water warning threshold",
+          "critical_threshold": "Critical-water threshold"
+        }
+      }
+    },
+    "abort": {
+      "no_new_vacuums": "Every vacuum entity in Home Assistant is already tracked.",
+      "no_tracked_vacuums": "No vacuums are currently tracked — add one first."
+    }
+  }
+}

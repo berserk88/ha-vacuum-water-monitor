@@ -1,0 +1,15 @@
+{
+  "domain": "ha_vacuum_water_monitor",
+  "name": "Vacuum Water Monitor",
+  "codeowners": [
+    "@berserk88"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/berserk88/ha-vacuum-water-monitor",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/berserk88/ha-vacuum-water-monitor/issues",
+  "requirements": [],
+  "version": "5.2.0"
+}
