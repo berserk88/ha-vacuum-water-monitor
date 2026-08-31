@@ -1,0 +1,111 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vacuum water level",
+        "description": "Ustawia domyslne progi ostrzezen o niskim poziomie wody. Po instalacji dodaj kazdego odkurzacza z menu Konfiguruj integracji.",
+        "data": {
+          "warning_threshold": "Prog ostrzezenia o niskim poziomie wody",
+          "critical_threshold": "Prog krytyczny poziomu wody"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Dozwolona jest tylko jedna instancja tej integracji."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vacuum water level",
+        "menu_options": {
+          "add_vacuum": "Dodaj odkurzacz do monitorowania",
+          "edit_vacuum": "Edytuj monitorowany odkurzacz",
+          "remove_vacuum": "Przestan monitorowac odkurzacz",
+          "thresholds": "Edytuj progi ostrzezen"
+        }
+      },
+      "add_vacuum": {
+        "title": "Dodaj odkurzacz",
+        "description": "Wybierz encje odkurzacza, dla ktorej chcesz sledzic zuzycie wody.",
+        "data": {
+          "vacuum_entity": "Odkurzacz"
+        }
+      },
+      "edit_vacuum": {
+        "title": "Edytuj monitorowany odkurzacz",
+        "description": "Wybierz, ktorego odkurzacza chcesz edytowac.",
+        "data": {
+          "vacuum_entity": "Odkurzacz"
+        }
+      },
+      "edit_vacuum_menu": {
+        "title": "Co chcesz zmienic?",
+        "menu_options": {
+          "edit_brand_model": "Zmien marke / model / pojemnosc",
+          "edit_dock_error": "Ustaw czujnik bledu stacji dokujacej",
+          "edit_mop_entities": "Ustaw encje trybu / intensywnosci mopowania"
+        }
+      },
+      "edit_dock_error": {
+        "title": "Czujnik bledu stacji dokujacej",
+        "description": "Przypisz encje, ktora zglasza bledy stacji dokujacej dla {entity_id}. Jesli blad jest zglaszany jako atrybut stanu, a nie glowny stan encji (np. encja stacji dokujacej, ktorej stan to 'docked', ale atrybut 'error' pokazuje 'Water empty'), podaj takze nazwe atrybutu. Trzy ponizsze komunikaty wyzwalajace sa dopasowywane niezaleznie od wielkosci liter/formatowania i mozna je dostosowac do dokladnego brzmienia Twojego odkurzacza. Pozostaw encje puste, aby to wyczyscic i wrocic do automatycznego wykrywania.",
+        "data": {
+          "dock_error_sensor": "Encja stacji dokujacej / bledu",
+          "dock_error_attribute": "Nazwa atrybutu (opcjonalnie — pozostaw puste, aby uzyc stanu encji)",
+          "dock_empty_message": "Komunikat \"pusty zbiornik czystej wody\"",
+          "dock_ok_message": "Komunikat \"brak bledu\" / wyczyszczony",
+          "dock_full_message": "Komunikat \"pelny zbiornik na brudna wode\"",
+          "waste_total_ml": "Pojemnosc zbiornika na brudna wode (domyslnie taka sama jak zbiornika czystej wody)"
+        }
+      },
+      "edit_mop_entities": {
+        "title": "Encje trybu / intensywnosci mopowania",
+        "description": "Przypisz encje, ktore zglaszaja tryb i intensywnosc mopowania dla {entity_id}, zastepujac automatyczne wykrywanie. Stan encji intensywnosci (np. Off/Low/Medium/High) jest uzywany zarowno do obliczen zuzycia wody, jak i do trenowania adaptacyjnego modelu predykcji dla kazdego poziomu intensywnosci — wybierz wlasciwa encje, jesli automatyczne wykrywanie znalazlo zla encje lub nic nie znalazlo. Pozostaw pole puste, aby wrocic do automatycznego wykrywania dla tej encji.",
+        "data": {
+          "mop_mode_entity": "Encja trybu mopowania",
+          "mop_intensity_entity": "Encja intensywnosci mopowania"
+        }
+      },
+      "select_brand": {
+        "title": "Marka",
+        "description": "Wybierz marke dla {entity_id}. Jesli mozliwe bylo pewne odgadniecie, jest ono wstepnie zaznaczone — w przeciwnym razie wybierz 'Inna / nie na liscie', aby podac pojemnosc recznie.",
+        "data": {
+          "brand": "Marka"
+        }
+      },
+      "select_model": {
+        "title": "Model",
+        "description": "Wybierz model {brand}, lub 'Inny / wlasna pojemnosc', aby podac pojemnosc recznie.",
+        "data": {
+          "model": "Model"
+        }
+      },
+      "custom_capacity": {
+        "title": "Pojemnosc zbiornika",
+        "description": "Podaj pojemnosc zbiornika wody na mopowanie w mL dla tego odkurzacza.",
+        "data": {
+          "water_total_ml": "Pojemnosc zbiornika"
+        }
+      },
+      "remove_vacuum": {
+        "title": "Przestan monitorowac odkurzacz",
+        "description": "Usuwa encje monitorowania wody dla tego odkurzacza i kasuje historie zbiornika.",
+        "data": {
+          "vacuum_entity": "Odkurzacz"
+        }
+      },
+      "thresholds": {
+        "title": "Progi ostrzezen",
+        "data": {
+          "warning_threshold": "Prog ostrzezenia o niskim poziomie wody",
+          "critical_threshold": "Prog krytyczny poziomu wody"
+        }
+      }
+    },
+    "abort": {
+      "no_new_vacuums": "Kazda encja odkurzacza w Home Assistant jest juz monitorowana.",
+      "no_tracked_vacuums": "Zaden odkurzacz nie jest obecnie monitorowany — najpierw go dodaj."
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Vacuum water level",
+        "description": "Sets the default low-water warning thresholds. After setup, add each vacuum from the integration's Configure menu.",
+        "data": {
+          "warning_threshold": "Low-water warning threshold",
+          "critical_threshold": "Critical-water threshold"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single instance of this integration is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vacuum water level",
+        "menu_options": {
+          "add_vacuum": "Add a vacuum to track",
+          "edit_vacuum": "Edit a tracked vacuum",
+          "remove_vacuum": "Stop tracking a vacuum",
+          "thresholds": "Edit warning thresholds"
+        }
+      },
+      "add_vacuum": {
+        "title": "Add a vacuum",
+        "description": "Pick a vacuum entity to start tracking water usage for.",
+        "data": {
+          "vacuum_entity": "Vacuum"
+        }
+      },
+      "edit_vacuum": {
+        "title": "Edit a tracked vacuum",
+        "description": "Pick which vacuum to edit.",
+        "data": {
+          "vacuum_entity": "Vacuum"
+        }
+      },
+      "edit_vacuum_menu": {
+        "title": "What do you want to change?",
+        "menu_options": {
+          "edit_brand_model": "Change brand / model / capacity",
+          "edit_dock_error": "Set the dock error sensor",
+          "edit_mop_entities": "Set the mop mode / intensity entities"
+        }
+      },
+      "edit_dock_error": {
+        "title": "Dock error sensor",
+        "description": "Assign the entity that reports the dock's errors for {entity_id}. If the error is reported as a state attribute rather than the entity's main state (e.g. a docking-station entity whose state is 'docked' but whose 'error' attribute reads 'Water empty'), also give the attribute name. The three trigger messages below are matched however they're capitalized/formatted, and can be customized to match your vacuum's exact wording. Leave the entity blank to clear this and fall back to auto-detection.",
+        "data": {
+          "dock_error_sensor": "Dock / error entity",
+          "dock_error_attribute": "Attribute name (optional — leave blank to use the entity's state)",
+          "dock_empty_message": "\"Clean water tank empty\" message",
+          "dock_ok_message": "\"No error\" / cleared message",
+          "dock_full_message": "\"Waste tank full\" message",
+          "waste_total_ml": "Waste/dirty tank capacity (defaults to the same as the clean tank)"
+        }
+      },
+      "edit_mop_entities": {
+        "title": "Mop mode / intensity entities",
+        "description": "Assign the entities that report mop mode and mop intensity for {entity_id}, overriding auto-detection. The intensity entity's state (e.g. Off/Low/Medium/High) is used both for water usage calculations and to train the adaptive prediction model per intensity level — pick the right one if auto-detection found the wrong entity or nothing at all. Leave either field blank to fall back to auto-detection for that entity.",
+        "data": {
+          "mop_mode_entity": "Mop mode entity",
+          "mop_intensity_entity": "Mop intensity entity"
+        }
+      },
+      "select_brand": {
+        "title": "Brand",
+        "description": "Pick the brand for {entity_id}. If a confident guess was possible it's pre-selected — otherwise pick 'Other / not listed' to enter capacity manually.",
+        "data": {
+          "brand": "Brand"
+        }
+      },
+      "select_model": {
+        "title": "Model",
+        "description": "Pick the {brand} model, or 'Other / custom capacity' to enter capacity manually.",
+        "data": {
+          "model": "Model"
+        }
+      },
+      "custom_capacity": {
+        "title": "Tank capacity",
+        "description": "Enter the mop water tank capacity in mL for this vacuum.",
+        "data": {
+          "water_total_ml": "Tank capacity"
+        }
+      },
+      "remove_vacuum": {
+        "title": "Stop tracking a vacuum",
+        "description": "This removes the vacuum's water-tracking entities and discards its tank history.",
+        "data": {
+          "vacuum_entity": "Vacuum"
+        }
+      },
+      "thresholds": {
+        "title": "Warning thresholds",
+        "data": {
+          "warning_threshold": "Low-water warning threshold",
+          "critical_threshold": "Critical-water threshold"
+        }
+      }
+    },
+    "abort": {
+      "no_new_vacuums": "Every vacuum entity in Home Assistant is already tracked.",
+      "no_tracked_vacuums": "No vacuums are currently tracked — add one first."
+    }
+  }
+}

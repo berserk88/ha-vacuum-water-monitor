@@ -1,5 +1,158 @@
 # Changelog
 
+## 5.5.1 (2026-08-25)
+
+**Fix: mop-wash dosing wasn't explicitly guarded against vacuum-only mode.**
+
+Prompted by a direct question about whether vacuum-only days could ever contribute to either
+tank's dosing. Area-based dosing already explicitly checked `not mop_off`; mop-wash-event
+dosing (the fixed volume per wash cycle) did not — it only checked that the vacuum's status
+transitioned to a mop-washing state. In practice a vacuum shouldn't report "washing the mop"
+if the mop wasn't used, so this was very likely safe, but it was relying on real-world
+vacuum behavior rather than an explicit software guarantee.
+
+- `tick_device()`'s mop-wash dosing block now also requires `not mop_off`, matching the
+  area-based path.
+- Closed a related gap this surfaced: the mop mode/intensity latch previously only updated
+  on a *non-off* live value, so a vacuum-only session would leave a stale intensity (e.g.
+  `"high"` from the last mop day) sitting in the latch. Since `mop_off` is evaluated against
+  the latched value once cleaning ends, that stale value could have defeated the new guard.
+  The latch now updates on every valid reading while actively cleaning, `"off"` included —
+  only genuinely missing/`"unavailable"` readings are skipped.
+- New tests (`VacuumOnlyModeContributesNothingTest`, 3 tests): area-based suppression,
+  the stale-latch-gets-overwritten edge case specifically, and a sanity check proving the
+  same scenario *does* dose when the mop was genuinely used — confirming the suppression is
+  actually due to `mop_off`, not an unrelated test-setup issue. 96 tests total.
+
+## 5.5.0 (2026-08-24)
+
+**New: adaptive calibration — the integration learns per-vacuum consumption/fill rates
+from real refill and empty cycles, instead of relying solely on static defaults.**
+
+- **Adaptive calibration model.** Every refill (water) or empty (waste) event is now also
+  a calibration checkpoint: comparing the tank's known capacity against how much the model
+  estimated was used since the last cycle gives a correction signal, applied per mop
+  intensity with a learning rate that decays as more cycles are observed (large adjustments
+  early on, small/stable ones once there's history) — see `tick.py::_calibrate_model`'s
+  docstring for the exact update rule and its honest framing as an adaptive-calibration
+  heuristic, not real regression (there's no ground-truth water-level sensor to train
+  against; the refill/empty event is the only real signal available). Cycles where too
+  little was estimated to have been used are skipped, so a precautionary top-off can't
+  corrupt the model. Mirrors independently for the waste tank (its own correction factors,
+  its own cycle count), since the two tanks calibrate against different events.
+- **Fixed a real, previously-undiscovered bug found while building this:**
+  `mop_mode_raw`/`mop_intensity_raw` were compared/looked-up without normalizing case, so a
+  capitalized entity state (`"Off"`, `"Medium"`, `"High"` — a very plausible way for a
+  select entity to report its option value) never matched the lowercase `"off"` check or
+  the lowercase `DEFAULT_INTENSITY_FACTOR`/`DEFAULT_USAGE_PER_M2` dict keys. Both now
+  normalize via the existing `slugify()` before any comparison/lookup.
+- **New: mop mode/intensity latching.** These select entities are only meaningful while
+  actively cleaning — most integrations (verified against the official `roborock`
+  integration) revert them to a default/off value once cleaning ends. But the mop-wash
+  dosing event fires *after* cleaning ends (vacuum returns to dock, then washes), so
+  re-reading the live entity at that point would see the reverted value, not what was
+  actually used during the run being washed off. `tick_device()` now latches the last valid
+  value seen while actively cleaning and uses that for anything happening after cleaning
+  stops — this was flagged directly and is exactly the scenario
+  `select.roborock_qrevo_maxv_mop_intensity` (Off/Low/Medium/High) exhibits.
+- **New: mop mode/intensity entities are now manually configurable**, mirroring the dock
+  error override from 5.3.0. **Edit a tracked vacuum → Set the mop mode / intensity
+  entities** lets you assign the right entity if auto-detection picked the wrong one or
+  found nothing — `config_flow.py::_mop_entity_updates` (the two fields are independent;
+  clearing one falls back to auto-detection for just that entity).
+- **New: `button.<vacuum>_clear_prediction_model`.** Resets both learned models
+  (water and waste) back to their unlearned defaults via the new
+  `storage.py::async_reset_prediction_models`. Does not touch current tank levels/counters
+  or the mop mode/intensity latches — only the learned correction factors and calibration
+  history.
+- The learned state is visible, not a black box: `sensor.<vacuum>_water_used_since_refill`
+  and `sensor.<vacuum>_waste_water_collected` now expose `prediction_cycles_observed`,
+  `prediction_correction_factors`, and `prediction_last_calibrated` as attributes.
+- New tests: `tests/test_prediction_model.py` (17 tests) — the case-normalization fix, the
+  latching behavior (including that a stale latch from a previous session doesn't leak into
+  a currently-active one), the calibration primitives in isolation (skip conditions,
+  direction of correction, per-intensity isolation, learning-rate decay, clamping), a
+  realistic multi-cycle convergence proof (error shrinks monotonically toward the true
+  ratio, not just "moves in the right direction once"), and the reset button's storage
+  method. Plus 4 new tests for `_mop_entity_updates` in `test_config_flow_helpers.py`. 93
+  tests total.
+
+## 5.4.0 (2026-08-23)
+
+**New: dirty/waste water tank tracking, and fully customizable dock error messages.**
+
+- **Customizable dock error messages.** The three trigger phrases the integration matches
+  against the dock error source — "clean tank empty", "no error / cleared", and "waste tank
+  full" — are now per-vacuum settings (`dock_empty_message`/`dock_ok_message`/
+  `dock_full_message`) instead of a hardcoded vocabulary, set via **Edit a tracked vacuum →
+  Set the dock error sensor**. Matching is slug-based (`tick.py::matches_dock_message`), so
+  exact casing/formatting still doesn't matter — this makes the feature usable with vacuum
+  brands/integrations that phrase dock errors completely differently from Roborock's
+  wording, which the previous fixed-set implementation couldn't support at all.
+- **Behavior change: the clean-tank auto-reset is now stricter.** Previously, *any* dock
+  error transition away from the empty message triggered a refill-reset. It now requires
+  the error to clear specifically to the configured "ok" message — an unrelated new error
+  (e.g. a duct blockage reported right after a refill) no longer gets mistaken for a refill.
+- **New: dirty/waste water tank tracking**, using the same accounting signals as the clean
+  tank (mop-wash events, cleaned area) mirrored into a second counter — the water that
+  leaves the clean tank during cleaning is what fills the dirty one, so both are estimated
+  from the same activity (`tick.py::tick_device`). Five new entities per vacuum:
+  - `sensor.<vacuum>_waste_tank_level` (%, estimated fill — the inverse direction from
+    "Water remaining": it fills up rather than empties)
+  - `sensor.<vacuum>_waste_water_collected` (mL, since last emptied)
+  - `sensor.<vacuum>_last_emptied` (timestamp, diagnostic)
+  - `binary_sensor.<vacuum>_waste_tank_full` (on at ≥90% estimated fill, or immediately if
+    the dock error source directly reports it — whichever signal fires first)
+  - `button.<vacuum>_waste_tank_emptied` (manual reset, mirroring the Refilled button)
+- **New: waste-tank auto-empty.** When the dock error source reports the waste tank is full
+  and then clears to "ok", the waste counter resets automatically — exactly like pressing
+  the Waste tank emptied button — on its own independent cooldown from the clean-tank reset,
+  so refilling one tank doesn't silently reset the other.
+- Waste tank capacity defaults to the same as the clean tank (`sensor_calculations.py::
+  _waste_capacity_ml`), overridable per-vacuum via the same edit step.
+- `sensor_calculations.py`: `estimate_waste_state()` mirrors `estimate_water_state()`;
+  `parse_waste_reset_datetime()` mirrors `parse_refill_datetime()` (both now share a
+  `_parse_stored_datetime()` helper rather than duplicating the ISO/millis fallback logic).
+- `storage.py`: tank state gains `waste_used_ml`/`last_waste_reset_iso`/
+  `last_waste_reset_ts`, and a new `async_reset_waste_tank()` mirrors `async_reset_tank()`.
+- New tests: waste-tank estimate/datetime coverage in `test_sensor_calculations.py`, and
+  in `test_tick_auto_detect.py` — dock-message customization (`MatchesDockMessageTest`),
+  an end-to-end waste-tank-auto-empty proof, and an end-to-end proof that a fully custom
+  message vocabulary works and the built-in defaults correctly do *not* match a
+  custom-configured vacuum. 72 tests total.
+
+## 5.3.0 (2026-08-22)
+
+- **Renamed the integration**, domain `ha_vacuum_water_monitor` → `vacuum_water_level`
+  ("Vacuum water level"), so it can be installed without conflicting with anyone else's copy
+  of the original project it was forked from. A one-time migration
+  (`__init__.py::_async_migrate_legacy_storage`) copies existing storage data forward on
+  first setup under the new domain — it never overwrites data that already exists under the
+  new domain, so it's safe to run on every startup and a no-op once migrated.
+- **Added: edit a tracked vacuum in place**, without removing and re-adding it. New
+  **Configure → Edit a tracked vacuum** menu option:
+  - **Change brand / model / capacity** — re-runs the add wizard's brand/model picker,
+    pre-filled with the vacuum's current selection where known, and overwrites capacity in
+    place. Auto-detected companion entities (status/area/mop mode/dock error) are untouched.
+  - **Set the dock error sensor** — manually assign the entity (and optionally a specific
+    attribute on it) that reports the dock's water-empty error, overriding auto-detection.
+- **Added: dock error can be read from an entity attribute, not just its main state.**
+  Some setups expose the dock's fault message on an attribute of an entity whose primary
+  state is something else (e.g. a docking-station entity with state `docked` and an `error`
+  attribute that reads `Water empty` when the tank runs dry) — `tick.py`'s dock error reader
+  now supports this via the new `dock_error_attribute` field, set through the edit flow
+  above. The water-empty match is also now slug-based (`tick.py::_is_water_empty`), so
+  `Water empty`, `water_empty`, etc. are all recognized as the same signal regardless of
+  exact casing/formatting.
+- `config_flow.py::_upsert_device_entry` is the one persistence helper both the initial add
+  and every edit path now share — update in place if the vacuum is already tracked, append
+  if not — replacing the add-only `_build_new_device_entry` from 5.2.0.
+- New tests: `tests/test_storage_migration.py` (3 tests, the legacy-domain migration),
+  plus additions to `tests/test_config_flow_helpers.py` (upsert/edit persistence logic) and
+  `tests/test_tick_auto_detect.py` (attribute-based dock error reading, slug-based matching,
+  and a full accounting-loop proof that a human-readable attribute value triggers the
+  auto-reset). 59 tests total.
+
 ## 5.2.0 (2026-08-20)
 
 **Breaking change: the Lovelace card is removed.** This release simplifies the project down
