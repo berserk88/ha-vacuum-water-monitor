@@ -90,59 +90,46 @@ def _upsert_device_entry(
     return result
 
 
-def _dock_error_updates(
+def _water_error_updates(
     entity_id: str | None,
     attribute: str | None,
-    empty_message: str | None = None,
-    ok_message: str | None = None,
-    full_message: str | None = None,
-    waste_total_ml: float | None = None,
 ) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Compute the (updates, clear_keys) to apply for a dock-error-source
-    edit: entity, attribute, the three customizable trigger messages (so
-    this works across vacuum brands/integrations that phrase dock errors
-    differently), and the waste/dirty tank capacity. Clearing the entity
-    clears everything tied to it, since none of the rest means anything
-    without a source entity. Each message/capacity can also be cleared
-    independently (left blank) to fall back to the built-in default."""
+    """Compute the (updates, clear_keys) for a clean water error sensor edit."""
     entity_id = (entity_id or "").strip() or None
     attribute = (attribute or "").strip() or None
-    empty_message = (empty_message or "").strip() or None
-    ok_message = (ok_message or "").strip() or None
-    full_message = (full_message or "").strip() or None
 
     if not entity_id:
-        return {}, (
-            "dock_error_sensor",
-            "dock_error_attribute",
-            "dock_empty_message",
-            "dock_ok_message",
-            "dock_full_message",
-            "waste_total_ml",
-        )
+        return {}, ("water_error_sensor", "water_error_attribute")
 
-    updates: dict[str, Any] = {"dock_error_sensor": entity_id}
+    updates: dict[str, Any] = {"water_error_sensor": entity_id}
     clear_keys: list[str] = []
 
     if attribute:
-        updates["dock_error_attribute"] = attribute
+        updates["water_error_attribute"] = attribute
     else:
-        clear_keys.append("dock_error_attribute")
+        clear_keys.append("water_error_attribute")
 
-    for key, value in (
-        ("dock_empty_message", empty_message),
-        ("dock_ok_message", ok_message),
-        ("dock_full_message", full_message),
-    ):
-        if value:
-            updates[key] = value
-        else:
-            clear_keys.append(key)
+    return updates, tuple(clear_keys)
 
-    if waste_total_ml and waste_total_ml > 0:
-        updates["waste_total_ml"] = waste_total_ml
+
+def _waste_error_updates(
+    entity_id: str | None,
+    attribute: str | None,
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Compute the (updates, clear_keys) for a dirty water error sensor edit."""
+    entity_id = (entity_id or "").strip() or None
+    attribute = (attribute or "").strip() or None
+
+    if not entity_id:
+        return {}, ("waste_error_sensor", "waste_error_attribute")
+
+    updates: dict[str, Any] = {"waste_error_sensor": entity_id}
+    clear_keys: list[str] = []
+
+    if attribute:
+        updates["waste_error_attribute"] = attribute
     else:
-        clear_keys.append("waste_total_ml")
+        clear_keys.append("waste_error_attribute")
 
     return updates, tuple(clear_keys)
 
@@ -323,7 +310,8 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
                 step_id="edit_vacuum_menu",
                 menu_options=[
                     "edit_brand_model",
-                    "edit_dock_error",
+                    "edit_water_error_sensor",
+                    "edit_waste_error_sensor",
                     "edit_mop_entities",
                     "edit_mop_settings",
                 ],
@@ -379,30 +367,18 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
         self._target_entity_id = None
         return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
-    async def async_step_edit_dock_error(
+    async def async_step_edit_water_error_sensor(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Manually assign the entity (and optionally a specific attribute)
-        that reports the dock's water-empty / waste-tank-full errors,
-        overriding whatever auto-detection found (or didn't find). Some
-        setups expose this on an attribute rather than the entity's main
-        state — e.g. a docking station entity whose state is "docked" but
-        whose "error" (or similar) attribute reads "Water empty" when the
-        tank runs dry. The three trigger messages are customizable per
-        vacuum, since different brands/integrations phrase them
-        differently — clearing any of them falls back to the default
-        (verified against the official Roborock integration's wording)."""
+        that reports when the clean water tank is empty."""
         settings = await self._storage.async_get_settings()
         current = _find_device_entry(settings, self._target_entity_id or "") or {}
 
         if user_input is not None:
-            updates, clear_keys = _dock_error_updates(
-                user_input.get("dock_error_sensor"),
-                user_input.get("dock_error_attribute"),
-                user_input.get("dock_empty_message"),
-                user_input.get("dock_ok_message"),
-                user_input.get("dock_full_message"),
-                user_input.get("waste_total_ml"),
+            updates, clear_keys = _water_error_updates(
+                user_input.get("water_error_sensor"),
+                user_input.get("water_error_attribute"),
             )
             return await self._async_apply_device_updates(updates, clear_keys)
 
@@ -410,40 +386,49 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
             return vol.Optional(key, description={"suggested_value": suggested})
 
         schema_dict: dict[Any, Any] = {
-            _field("dock_error_sensor", current.get("dock_error_sensor")): (
+            _field("water_error_sensor", current.get("water_error_sensor")): (
                 selector.EntitySelector(selector.EntitySelectorConfig())
             ),
-            _field("dock_error_attribute", current.get("dock_error_attribute")): (
+            _field("water_error_attribute", current.get("water_error_attribute")): (
                 selector.TextSelector(selector.TextSelectorConfig())
-            ),
-            _field(
-                "dock_empty_message",
-                current.get("dock_empty_message") or DEFAULT_DOCK_EMPTY_MESSAGE,
-            ): selector.TextSelector(selector.TextSelectorConfig()),
-            _field(
-                "dock_ok_message",
-                current.get("dock_ok_message") or DEFAULT_DOCK_OK_MESSAGE,
-            ): selector.TextSelector(selector.TextSelectorConfig()),
-            _field(
-                "dock_full_message",
-                current.get("dock_full_message") or DEFAULT_DOCK_FULL_MESSAGE,
-            ): selector.TextSelector(selector.TextSelectorConfig()),
-            _field(
-                "waste_total_ml",
-                current.get("waste_total_ml") or current.get("water_total_ml"),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=50,
-                    max=10000,
-                    step=50,
-                    unit_of_measurement="mL",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
             ),
         }
 
         return self.async_show_form(
-            step_id="edit_dock_error",
+            step_id="edit_water_error_sensor",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"entity_id": self._target_entity_id or ""},
+        )
+
+    async def async_step_edit_waste_error_sensor(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Manually assign the entity (and optionally a specific attribute)
+        that reports when the dirty water tank is full."""
+        settings = await self._storage.async_get_settings()
+        current = _find_device_entry(settings, self._target_entity_id or "") or {}
+
+        if user_input is not None:
+            updates, clear_keys = _waste_error_updates(
+                user_input.get("waste_error_sensor"),
+                user_input.get("waste_error_attribute"),
+            )
+            return await self._async_apply_device_updates(updates, clear_keys)
+
+        def _field(key: str, suggested: Any) -> vol.Optional:
+            return vol.Optional(key, description={"suggested_value": suggested})
+
+        schema_dict: dict[Any, Any] = {
+            _field("waste_error_sensor", current.get("waste_error_sensor")): (
+                selector.EntitySelector(selector.EntitySelectorConfig())
+            ),
+            _field("waste_error_attribute", current.get("waste_error_attribute")): (
+                selector.TextSelector(selector.TextSelectorConfig())
+            ),
+        }
+
+        return self.async_show_form(
+            step_id="edit_waste_error_sensor",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={"entity_id": self._target_entity_id or ""},
         )
