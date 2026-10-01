@@ -23,9 +23,34 @@ from .sensor_calculations import (
     vacuum_slug,
 )
 from .storage import VacuumWaterStorage
-from .tick import DEFAULT_DOCK_FULL_MESSAGE, list_vacuums, matches_dock_message
+from .tick import (
+    DEFAULT_DOCK_EMPTY_MESSAGE,
+    DEFAULT_DOCK_FULL_MESSAGE,
+    DEFAULT_DOCK_OK_MESSAGE,
+    list_vacuums,
+    matches_dock_message,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _dock_error_diagnostics(
+    device: dict[str, Any], tank_state: dict[str, Any]
+) -> dict[str, Any]:
+    """Diagnostic attributes showing exactly what this vacuum's dock-error
+    configuration currently is and what value was last observed, so a
+    misconfiguration (wrong entity, wrong attribute, or a message that
+    doesn't match the vacuum's actual wording) is directly verifiable from
+    Developer Tools -> States instead of having to guess why an expected
+    refill/empty auto-reset didn't happen."""
+    return {
+        "dock_error_sensor": device.get("dock_error_sensor"),
+        "dock_error_attribute": device.get("dock_error_attribute"),
+        "dock_error_last_observed_value": tank_state.get("last_dock_err"),
+        "dock_empty_message": device.get("dock_empty_message") or DEFAULT_DOCK_EMPTY_MESSAGE,
+        "dock_ok_message": device.get("dock_ok_message") or DEFAULT_DOCK_OK_MESSAGE,
+        "dock_full_message": device.get("dock_full_message") or DEFAULT_DOCK_FULL_MESSAGE,
+    }
 
 # Waste tank fill percentage (estimated) at or above which the tank is
 # considered full, if the dock hasn't directly reported a full error yet.
@@ -200,6 +225,7 @@ class WaterLowBinarySensor(BinarySensorEntity):
             "remaining_percent": remaining,
             "warning_threshold": warning_threshold,
             "critical_threshold": critical_threshold,
+            **_dock_error_diagnostics(self._device, tank_state),
         }
 
 
@@ -362,4 +388,5 @@ class WasteTankFullBinarySensor(BinarySensorEntity):
             "total_ml": estimate["total_ml"],
             "dock_reports_full": dock_reports_full,
             "threshold_percent": WASTE_FULL_THRESHOLD_PERCENT,
+            **_dock_error_diagnostics(self._device, tank_state),
         }

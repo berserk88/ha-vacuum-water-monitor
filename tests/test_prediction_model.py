@@ -125,6 +125,64 @@ def _device(**overrides):
     return base
 
 
+class RealVendorOptionNameCoverageTest(unittest.TestCase):
+    """Roborock's select entities use several real option names beyond the
+    original standard/deep/fast + low/medium/high set (e.g. deep_plus,
+    deep_plus_pearl on S8-series; mild/moderate/intense on S7-series).
+    Anything not explicitly listed silently falls back to the standard/
+    medium rate, which is a real under-count for a genuinely higher-water
+    mode rather than an error -- so these must resolve to their own rate,
+    not the fallback."""
+
+    def test_deep_plus_mop_mode_uses_its_own_higher_rate_not_standard_fallback(self) -> None:
+        tick, storage_mod = _load_tick()
+        hass = FakeHass(
+            FakeStates(
+                {
+                    "vacuum.kitchen_robot": FakeState("cleaning"),
+                    "sensor.kitchen_robot_status": FakeState("cleaning"),
+                    "sensor.kitchen_robot_area": FakeState("10.0"),
+                    "select.kitchen_robot_mop_mode": FakeState("deep_plus"),
+                    "select.kitchen_robot_mop_intensity": FakeState("medium"),
+                }
+            )
+        )
+        device = _device()
+        state = storage_mod.VacuumWaterStorage.default_tank_state()
+        state["last_area"] = 5.0
+
+        new_state, _dirty = tick.tick_device(hass, device, state)
+
+        # 5.0 delta * 12 ml/m² (deep_plus) * 1.0 (medium) = 60, not 30
+        # (what the old "standard" fallback would have silently produced).
+        self.assertEqual(new_state["used_ml"], 60)
+
+    def test_s7_series_intensity_names_are_recognized(self) -> None:
+        """S7-series vacuums use mild/moderate/intense instead of
+        low/medium/high for the same concept."""
+        tick, storage_mod = _load_tick()
+        hass = FakeHass(
+            FakeStates(
+                {
+                    "vacuum.kitchen_robot": FakeState("cleaning"),
+                    "sensor.kitchen_robot_status": FakeState("cleaning"),
+                    "sensor.kitchen_robot_area": FakeState("10.0"),
+                    "select.kitchen_robot_mop_mode": FakeState("standard"),
+                    "select.kitchen_robot_mop_intensity": FakeState("intense"),
+                }
+            )
+        )
+        device = _device()
+        state = storage_mod.VacuumWaterStorage.default_tank_state()
+        state["last_area"] = 5.0
+
+        new_state, _dirty = tick.tick_device(hass, device, state)
+
+        # 5.0 delta * 6 ml/m² (standard) * 1.2 ("intense" == "high") = 36,
+        # not the 1.0x fallback (30) an unrecognized name would produce.
+        self.assertEqual(new_state["used_ml"], 36)
+
+
 class CaseNormalizationTest(unittest.TestCase):
     """The real bug: mop_mode_raw/mop_intensity_raw were compared/looked
     up without normalizing case, so a capitalized entity state (very

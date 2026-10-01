@@ -8,13 +8,18 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 
 from .const import (
     CONF_CRITICAL_THRESHOLD,
     CONF_WARNING_THRESHOLD,
+    DATA_DOCK_ERROR_ENTITIES,
+    DATA_DOCK_ERROR_UNSUB,
     DATA_STORAGE,
     DATA_TICK_UNSUB,
     DEFAULT_TICK_INTERVAL_SECONDS,
@@ -25,7 +30,7 @@ from .const import (
     signal_vacuum_water_updated,
 )
 from .storage import VacuumWaterStorage
-from .tick import async_ensure_auto_config, async_tick_water_state
+from .tick import async_ensure_auto_config, async_tick_water_state, dock_error_entity_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -124,6 +129,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bucket = hass.data.get(DOMAIN, {})
     if unsub := bucket.pop(DATA_TICK_UNSUB, None):
         unsub()
+    if unsub := bucket.pop(DATA_DOCK_ERROR_UNSUB, None):
+        unsub()
+    bucket.pop(DATA_DOCK_ERROR_ENTITIES, None)
     bucket.pop(DATA_STORAGE, None)
     _LOGGER.debug("Vacuum water level unloaded (entry_id=%s)", entry.entry_id)
     return True
@@ -185,7 +193,11 @@ async def _async_prune_ghost_devices(
 def _async_start_tick(
     hass: HomeAssistant, storage: VacuumWaterStorage, entry_id: str
 ) -> None:
-    """Start the 60s server-side accounting task."""
+    """Start the 60s server-side accounting task, plus an event-driven
+    listener that reacts immediately when a configured dock_error_sensor
+    entity changes -- without it, a refill/empty auto-reset would only be
+    noticed on the next 60s poll, which can read as "I just refilled but
+    it's still showing an error" for anyone checking right away."""
     bucket = hass.data.setdefault(DOMAIN, {})
     if bucket.get(DATA_TICK_UNSUB):
         return
@@ -216,6 +228,28 @@ def _async_start_tick(
                 {"settings": fresh_settings},
             )
             hass.bus.async_fire(EVENT_STATE_CHANGED, {"settings": fresh_settings})
+        await _async_sync_dock_error_listener()
+
+    @callback
+    def _on_dock_error_change(event) -> None:
+        hass.async_create_task(_tick())
+
+    async def _async_sync_dock_error_listener() -> None:
+        """Re-subscribe the state-change listener whenever the set of
+        configured dock_error_sensor entities changes (a vacuum was
+        added/edited/removed) -- cheap: just a settings read + set
+        comparison, already run at the end of every tick."""
+        settings = await storage.async_get_settings()
+        wanted = dock_error_entity_ids(settings)
+        if wanted == bucket.get(DATA_DOCK_ERROR_ENTITIES):
+            return
+        if unsub := bucket.pop(DATA_DOCK_ERROR_UNSUB, None):
+            unsub()
+        bucket[DATA_DOCK_ERROR_ENTITIES] = wanted
+        if wanted:
+            bucket[DATA_DOCK_ERROR_UNSUB] = async_track_state_change_event(
+                hass, sorted(wanted), _on_dock_error_change
+            )
 
     bucket[DATA_TICK_UNSUB] = async_track_time_interval(
         hass, _tick, timedelta(seconds=DEFAULT_TICK_INTERVAL_SECONDS)

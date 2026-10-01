@@ -55,7 +55,8 @@ automation, or notification the normal Home Assistant way.
    the **Waste tank emptied** button after emptying the dirty one. Both can also auto-reset:
    when the dock error source reports the clean tank is empty and then clears, that's treated
    as a refill; when it reports the waste tank is full and then clears, that's treated as
-   emptying. The exact messages your vacuum uses for "empty" / "ok" / "full" are fully
+   emptying — checked immediately when the dock error entity changes, not just on the regular
+   60-second cycle. The exact messages your vacuum uses for "empty" / "ok" / "full" are fully
    customizable per vacuum (see [Managing tracked vacuums](#managing-tracked-vacuums)) since
    different brands/integrations phrase them differently.
 6. **Everything is stored by Home Assistant** (Store, included in backups) — counters and
@@ -180,6 +181,27 @@ level → Configure) at any time to:
   sensor.
 
 ## FAQ
+
+**I just refilled/emptied a tank but the tracking still shows an error/low state.**
+First, check *which* button or path you used:
+- **Pressed Refilled / Waste tank emptied?** This always works immediately — it resets the
+  counter directly, with no dependency on the dock error entity at all. If the corresponding
+  sensor still looks wrong right after pressing it, that's worth reporting as a bug.
+- **Relying on the dock error clearing automatically (no button press)?** Check the **Water
+  low** / **Waste tank full** binary sensor's attributes in Developer Tools → States:
+  `dock_error_sensor` and `dock_error_attribute` show what's currently configured (`None`
+  means nothing is configured — auto-detection didn't find your dock error source, so
+  nothing can auto-update; you'll need **Edit a tracked vacuum → Set the dock error sensor**).
+  `dock_error_last_observed_value` shows exactly what the integration currently sees from
+  that source — compare it against `dock_empty_message`/`dock_ok_message`/
+  `dock_full_message` to see whether your vacuum's actual wording matches what's configured.
+  As of this version, a dock error entity change also triggers an immediate check (not just
+  the 60-second poll), so there shouldn't be a meaningful delay once the configuration is
+  right.
+- If none of that explains it: the vacuum's *own* dock error entity might not clear
+  instantly when you physically add water — many vacuums only re-check at specific points
+  (e.g. the next docking cycle), not continuously. That's a hardware/vendor behavior outside
+  this integration's control; the Refilled/Emptied buttons are the reliable manual fallback.
 
 **Do I have to configure anything besides adding my vacuum?**
 No. Companion sensors (cleaned area, status, mop mode/intensity, dock error) are

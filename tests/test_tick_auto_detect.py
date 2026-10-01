@@ -241,6 +241,46 @@ class ResolveDefaultTankMlTest(unittest.TestCase):
         self.assertIsNone(tick._resolve_default_tank_ml(hass, "vacuum.mystery2"))
 
 
+class DockErrorEntityIdsTest(unittest.TestCase):
+    def test_collects_across_configured_and_user_devices(self) -> None:
+        tick, _storage = _load_tick()
+        settings = {
+            "configured_devices": [
+                {"vacuum_entity": "vacuum.a", "dock_error_sensor": "sensor.a_dock"}
+            ],
+            "user_devices": [
+                {"vacuum_entity": "vacuum.b", "dock_error_sensor": "sensor.b_dock"}
+            ],
+        }
+
+        self.assertEqual(
+            tick.dock_error_entity_ids(settings), {"sensor.a_dock", "sensor.b_dock"}
+        )
+
+    def test_ignores_devices_with_no_dock_error_sensor_configured(self) -> None:
+        tick, _storage = _load_tick()
+        settings = {"configured_devices": [{"vacuum_entity": "vacuum.a"}]}
+
+        self.assertEqual(tick.dock_error_entity_ids(settings), set())
+
+    def test_empty_settings_returns_empty_set(self) -> None:
+        tick, _storage = _load_tick()
+        self.assertEqual(tick.dock_error_entity_ids({}), set())
+
+    def test_deduplicates_shared_dock_error_entity(self) -> None:
+        """Two vacuums sharing one dock error source (uncommon but
+        possible) must only need one listener registration."""
+        tick, _storage = _load_tick()
+        settings = {
+            "configured_devices": [
+                {"vacuum_entity": "vacuum.a", "dock_error_sensor": "sensor.shared_dock"},
+                {"vacuum_entity": "vacuum.b", "dock_error_sensor": "sensor.shared_dock"},
+            ]
+        }
+
+        self.assertEqual(tick.dock_error_entity_ids(settings), {"sensor.shared_dock"})
+
+
 class GuessBrandModelTest(unittest.TestCase):
     def test_matches_known_model(self) -> None:
         tick, _storage = _load_tick()

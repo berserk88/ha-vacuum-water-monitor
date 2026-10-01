@@ -50,11 +50,35 @@ MOP_WASH_STATES = {
     "zoned_clean_mop_cleaning",
 }
 
-DEFAULT_USAGE_PER_M2 = {"fast": 4, "standard": 6, "deep": 9}
+# Baseline mL of clean water used per m² mopped, by mop mode, and a
+# multiplier by mop intensity -- the static formula the adaptive
+# calibration layer corrects on top of (see _calibrate_model). Option
+# names verified against the Roborock integration's real select entities
+# (S8-series: mop modes standard/deep/custom/deep_plus/fast/
+# deep_plus_pearl/smart_mode; intensities off/low/medium/high/custom/max/
+# smart_mode/custom_water_flow; older S7-series intensities are
+# mild/moderate/intense). Anything not listed falls back to the
+# "standard"/1.0x rate, which silently under-counts a higher-water mode --
+# so new option names should be added here rather than left to the
+# fallback. The absolute numbers are estimates (there's no per-mode water
+# spec to draw from); what matters is the ordering, which the adaptive
+# model then calibrates.
+DEFAULT_USAGE_PER_M2 = {
+    "fast": 4,
+    "standard": 6,
+    "custom": 6,
+    "smart_mode": 6,
+    "deep": 9,
+    "deep_plus": 12,
+    "deep_plus_pearl": 12,
+}
 DEFAULT_INTENSITY_FACTOR = {
     "low": 0.8,
+    "mild": 0.8,  # S7-series naming
     "medium": 1.0,
+    "moderate": 1.0,  # S7-series naming
     "high": 1.2,
+    "intense": 1.2,  # S7-series naming
     "max": 1.3,
     "custom": 1.0,
     "smart_mode": 1.0,
@@ -607,6 +631,24 @@ def tick_device(
         dirty = True
 
     return state, dirty
+
+
+def dock_error_entity_ids(settings: dict[str, Any]) -> set[str]:
+    """Every dock_error_sensor entity_id currently configured across all
+    tracked vacuums (auto-detected or manually assigned via the config
+    flow's "Set the dock error sensor" edit step). Used to subscribe to
+    real-time state-change events for those entities, so an empty/full
+    error clearing gets picked up immediately rather than waiting for the
+    next 60s poll tick."""
+    ids: set[str] = set()
+    for key in ("configured_devices", "user_devices"):
+        for item in settings.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            entity_id = item.get("dock_error_sensor")
+            if entity_id:
+                ids.add(str(entity_id))
+    return ids
 
 
 def list_vacuums(hass: HomeAssistant) -> list[dict[str, Any]]:

@@ -32,6 +32,7 @@ def _load_migration_fn():
     ha = types.ModuleType("homeassistant")
     core = types.ModuleType("homeassistant.core")
     core.HomeAssistant = object
+    core.callback = lambda fn: fn
     config_entries_mod = types.ModuleType("homeassistant.config_entries")
     config_entries_mod.ConfigEntry = object
     const_mod = types.ModuleType("homeassistant.const")
@@ -48,6 +49,7 @@ def _load_migration_fn():
     dispatcher_mod.async_dispatcher_send = lambda *a, **k: None
     event_mod = types.ModuleType("homeassistant.helpers.event")
     event_mod.async_track_time_interval = lambda *a, **k: (lambda: None)
+    event_mod.async_track_state_change_event = lambda *a, **k: (lambda: None)
     storage_mod = types.ModuleType("homeassistant.helpers.storage")
     er_mod = types.ModuleType("homeassistant.helpers.entity_registry")
     er_mod.async_get = lambda hass: None
@@ -106,6 +108,8 @@ def _load_migration_fn():
     const.DEFAULT_CRITICAL_THRESHOLD = 10
     const.DATA_STORAGE = "storage"
     const.DATA_TICK_UNSUB = "tick_unsub"
+    const.DATA_DOCK_ERROR_UNSUB = "dock_error_unsub"
+    const.DATA_DOCK_ERROR_ENTITIES = "dock_error_entities"
     const.DEFAULT_TICK_INTERVAL_SECONDS = 60
     const.EVENT_STATE_CHANGED = "vacuum_water_level_state_changed"
     const.signal_vacuum_water_updated = lambda entry_id: f"vacuum_water_level_{entry_id}_updated"

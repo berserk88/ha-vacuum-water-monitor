@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.6.0 (2026-09-26)
+
+Prompted by a direct report: "I just refilled the tank but it's still showing an error
+state." Everything requested in this round already existed in the app (editable dock
+error/mop entities since 5.3–5.5, the Emptied button since 5.4, auto-reset-on-clear since
+5.3, per-intensity water/waste rates since 5.4–5.5) — auditing why it might not have felt
+that way surfaced two real gaps, both fixed:
+
+- **Fix: auto-reset only ever ran on the 60-second poll.** There was no reaction tied to the
+  dock error entity actually changing — so an empty/full error clearing was only ever
+  noticed on the next scheduled tick, up to a minute of lag between refilling and the
+  tracking catching up. `__init__.py` now also subscribes to real-time state-change events
+  for every configured `dock_error_sensor` (`tick.py::dock_error_entity_ids`) and runs an
+  immediate tick whenever one fires, in addition to the regular 60s poll. The listener
+  re-syncs itself after every tick, so adding/editing/removing a vacuum's dock error source
+  via the config flow takes effect without a restart.
+- **Fix: no way to verify a dock-error configuration was actually correct.** If
+  auto-detection couldn't find the right entity (or found nothing), tracking would silently
+  never auto-update, with no way to tell the difference between "not configured" and
+  "configured but not matching." `binary_sensor.py`'s Water low and Waste tank full sensors
+  now expose `dock_error_sensor`, `dock_error_attribute`, `dock_error_last_observed_value`,
+  and the three effective trigger messages as attributes — visible directly from Developer
+  Tools → States, so a misconfiguration is checkable rather than guessable.
+- **Fix: several real Roborock mop-mode/intensity option names weren't in the lookup
+  tables**, silently falling back to the standard/medium rate — a real under-count for a
+  genuinely higher-water mode, not a graceful default. Added `deep_plus`/`deep_plus_pearl`
+  (S8-series mop modes) and `mild`/`moderate`/`intense` (S7-series intensity naming,
+  mapped to the same rates as low/medium/high).
+- New tests: `tick.py::dock_error_entity_ids` (4 tests), the expanded option-name coverage
+  (2 tests proving the new names resolve to their own rate, not the fallback), and
+  `tests/test_binary_sensor_helpers.py` (new, 4 tests) covering the diagnostics attributes,
+  including that an unconfigured dock error shows an unambiguous `None` rather than looking
+  like a working configuration. 106 tests total.
+
 ## 5.5.1 (2026-08-25)
 
 **Fix: mop-wash dosing wasn't explicitly guarded against vacuum-only mode.**

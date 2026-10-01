@@ -23,9 +23,6 @@ from .tick import (
     DEFAULT_DOCK_EMPTY_MESSAGE,
     DEFAULT_DOCK_FULL_MESSAGE,
     DEFAULT_DOCK_OK_MESSAGE,
-    DEFAULT_INTENSITY_FACTOR,
-    DEFAULT_USAGE_PER_M2,
-    DEFAULT_WASH_VOLUME_ML,
     guess_brand_model,
     list_vacuums,
 )
@@ -90,46 +87,59 @@ def _upsert_device_entry(
     return result
 
 
-def _water_error_updates(
+def _dock_error_updates(
     entity_id: str | None,
     attribute: str | None,
+    empty_message: str | None = None,
+    ok_message: str | None = None,
+    full_message: str | None = None,
+    waste_total_ml: float | None = None,
 ) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Compute the (updates, clear_keys) for a clean water error sensor edit."""
+    """Compute the (updates, clear_keys) to apply for a dock-error-source
+    edit: entity, attribute, the three customizable trigger messages (so
+    this works across vacuum brands/integrations that phrase dock errors
+    differently), and the waste/dirty tank capacity. Clearing the entity
+    clears everything tied to it, since none of the rest means anything
+    without a source entity. Each message/capacity can also be cleared
+    independently (left blank) to fall back to the built-in default."""
     entity_id = (entity_id or "").strip() or None
     attribute = (attribute or "").strip() or None
+    empty_message = (empty_message or "").strip() or None
+    ok_message = (ok_message or "").strip() or None
+    full_message = (full_message or "").strip() or None
 
     if not entity_id:
-        return {}, ("water_error_sensor", "water_error_attribute")
+        return {}, (
+            "dock_error_sensor",
+            "dock_error_attribute",
+            "dock_empty_message",
+            "dock_ok_message",
+            "dock_full_message",
+            "waste_total_ml",
+        )
 
-    updates: dict[str, Any] = {"water_error_sensor": entity_id}
+    updates: dict[str, Any] = {"dock_error_sensor": entity_id}
     clear_keys: list[str] = []
 
     if attribute:
-        updates["water_error_attribute"] = attribute
+        updates["dock_error_attribute"] = attribute
     else:
-        clear_keys.append("water_error_attribute")
+        clear_keys.append("dock_error_attribute")
 
-    return updates, tuple(clear_keys)
+    for key, value in (
+        ("dock_empty_message", empty_message),
+        ("dock_ok_message", ok_message),
+        ("dock_full_message", full_message),
+    ):
+        if value:
+            updates[key] = value
+        else:
+            clear_keys.append(key)
 
-
-def _waste_error_updates(
-    entity_id: str | None,
-    attribute: str | None,
-) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Compute the (updates, clear_keys) for a dirty water error sensor edit."""
-    entity_id = (entity_id or "").strip() or None
-    attribute = (attribute or "").strip() or None
-
-    if not entity_id:
-        return {}, ("waste_error_sensor", "waste_error_attribute")
-
-    updates: dict[str, Any] = {"waste_error_sensor": entity_id}
-    clear_keys: list[str] = []
-
-    if attribute:
-        updates["waste_error_attribute"] = attribute
+    if waste_total_ml and waste_total_ml > 0:
+        updates["waste_total_ml"] = waste_total_ml
     else:
-        clear_keys.append("waste_error_attribute")
+        clear_keys.append("waste_total_ml")
 
     return updates, tuple(clear_keys)
 
@@ -156,35 +166,6 @@ def _mop_entity_updates(
         updates["mop_intensity_entity"] = mop_intensity_entity
     else:
         clear_keys.append("mop_intensity_entity")
-
-    return updates, tuple(clear_keys)
-
-
-def _mop_settings_updates(
-    usage_ml_per_m2: dict[str, Any] | None = None,
-    intensity_factor: dict[str, Any] | None = None,
-    wash_volume_ml: float | None = None,
-) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Compute the (updates, clear_keys) for mop settings edit. All fields
-    are optional and independent — clearing any of them falls back to the
-    built-in defaults."""
-    updates: dict[str, Any] = {}
-    clear_keys: list[str] = []
-
-    if usage_ml_per_m2:
-        updates["usage_ml_per_m2"] = usage_ml_per_m2
-    else:
-        clear_keys.append("usage_ml_per_m2")
-
-    if intensity_factor:
-        updates["intensity_factor"] = intensity_factor
-    else:
-        clear_keys.append("intensity_factor")
-
-    if wash_volume_ml and wash_volume_ml > 0:
-        updates["wash_volume_ml"] = wash_volume_ml
-    else:
-        clear_keys.append("wash_volume_ml")
 
     return updates, tuple(clear_keys)
 
@@ -252,12 +233,7 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
         """Top-level menu."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=[
-                "add_vacuum",
-                "edit_vacuum",
-                "remove_vacuum",
-                "thresholds",
-            ],
+            menu_options=["add_vacuum", "edit_vacuum", "remove_vacuum", "thresholds"],
         )
 
     # ---- Add vacuum --------------------------------------------------
@@ -308,13 +284,7 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
             self._target_entity_id = user_input["vacuum_entity"]
             return self.async_show_menu(
                 step_id="edit_vacuum_menu",
-                menu_options=[
-                    "edit_brand_model",
-                    "edit_water_error_sensor",
-                    "edit_waste_error_sensor",
-                    "edit_mop_entities",
-                    "edit_mop_settings",
-                ],
+                menu_options=["edit_brand_model", "edit_dock_error", "edit_mop_entities"],
             )
 
         return self.async_show_form(
@@ -367,18 +337,30 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
         self._target_entity_id = None
         return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
-    async def async_step_edit_water_error_sensor(
+    async def async_step_edit_dock_error(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Manually assign the entity (and optionally a specific attribute)
-        that reports when the clean water tank is empty."""
+        that reports the dock's water-empty / waste-tank-full errors,
+        overriding whatever auto-detection found (or didn't find). Some
+        setups expose this on an attribute rather than the entity's main
+        state — e.g. a docking station entity whose state is "docked" but
+        whose "error" (or similar) attribute reads "Water empty" when the
+        tank runs dry. The three trigger messages are customizable per
+        vacuum, since different brands/integrations phrase them
+        differently — clearing any of them falls back to the default
+        (verified against the official Roborock integration's wording)."""
         settings = await self._storage.async_get_settings()
         current = _find_device_entry(settings, self._target_entity_id or "") or {}
 
         if user_input is not None:
-            updates, clear_keys = _water_error_updates(
-                user_input.get("water_error_sensor"),
-                user_input.get("water_error_attribute"),
+            updates, clear_keys = _dock_error_updates(
+                user_input.get("dock_error_sensor"),
+                user_input.get("dock_error_attribute"),
+                user_input.get("dock_empty_message"),
+                user_input.get("dock_ok_message"),
+                user_input.get("dock_full_message"),
+                user_input.get("waste_total_ml"),
             )
             return await self._async_apply_device_updates(updates, clear_keys)
 
@@ -386,49 +368,40 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
             return vol.Optional(key, description={"suggested_value": suggested})
 
         schema_dict: dict[Any, Any] = {
-            _field("water_error_sensor", current.get("water_error_sensor")): (
+            _field("dock_error_sensor", current.get("dock_error_sensor")): (
                 selector.EntitySelector(selector.EntitySelectorConfig())
             ),
-            _field("water_error_attribute", current.get("water_error_attribute")): (
+            _field("dock_error_attribute", current.get("dock_error_attribute")): (
                 selector.TextSelector(selector.TextSelectorConfig())
+            ),
+            _field(
+                "dock_empty_message",
+                current.get("dock_empty_message") or DEFAULT_DOCK_EMPTY_MESSAGE,
+            ): selector.TextSelector(selector.TextSelectorConfig()),
+            _field(
+                "dock_ok_message",
+                current.get("dock_ok_message") or DEFAULT_DOCK_OK_MESSAGE,
+            ): selector.TextSelector(selector.TextSelectorConfig()),
+            _field(
+                "dock_full_message",
+                current.get("dock_full_message") or DEFAULT_DOCK_FULL_MESSAGE,
+            ): selector.TextSelector(selector.TextSelectorConfig()),
+            _field(
+                "waste_total_ml",
+                current.get("waste_total_ml") or current.get("water_total_ml"),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=50,
+                    max=10000,
+                    step=50,
+                    unit_of_measurement="mL",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
             ),
         }
 
         return self.async_show_form(
-            step_id="edit_water_error_sensor",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={"entity_id": self._target_entity_id or ""},
-        )
-
-    async def async_step_edit_waste_error_sensor(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Manually assign the entity (and optionally a specific attribute)
-        that reports when the dirty water tank is full."""
-        settings = await self._storage.async_get_settings()
-        current = _find_device_entry(settings, self._target_entity_id or "") or {}
-
-        if user_input is not None:
-            updates, clear_keys = _waste_error_updates(
-                user_input.get("waste_error_sensor"),
-                user_input.get("waste_error_attribute"),
-            )
-            return await self._async_apply_device_updates(updates, clear_keys)
-
-        def _field(key: str, suggested: Any) -> vol.Optional:
-            return vol.Optional(key, description={"suggested_value": suggested})
-
-        schema_dict: dict[Any, Any] = {
-            _field("waste_error_sensor", current.get("waste_error_sensor")): (
-                selector.EntitySelector(selector.EntitySelectorConfig())
-            ),
-            _field("waste_error_attribute", current.get("waste_error_attribute")): (
-                selector.TextSelector(selector.TextSelectorConfig())
-            ),
-        }
-
-        return self.async_show_form(
-            step_id="edit_waste_error_sensor",
+            step_id="edit_dock_error",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={"entity_id": self._target_entity_id or ""},
         )
@@ -467,143 +440,6 @@ class HAVacuumWaterMonitorOptionsFlow(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="edit_mop_entities",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={"entity_id": self._target_entity_id or ""},
-        )
-
-    async def async_step_edit_mop_settings(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Edit water consumption settings per mop mode/intensity.
-        Allows customizing usage per m², intensity correction factors,
-        and wash volume — all of which affect water consumption calculation."""
-        settings = await self._storage.async_get_settings()
-        current = _find_device_entry(settings, self._target_entity_id or "") or {}
-
-        if user_input is not None:
-            # Convert user input to properly typed dictionaries
-            usage_ml_per_m2: dict[str, float] | None = None
-            intensity_factor: dict[str, float] | None = None
-
-            # Parse usage_ml_per_m2
-            if user_input.get("usage_fast") or user_input.get("usage_standard") or user_input.get("usage_deep"):
-                usage_ml_per_m2 = {}
-                if user_input.get("usage_fast"):
-                    usage_ml_per_m2["fast"] = float(user_input["usage_fast"])
-                if user_input.get("usage_standard"):
-                    usage_ml_per_m2["standard"] = float(user_input["usage_standard"])
-                if user_input.get("usage_deep"):
-                    usage_ml_per_m2["deep"] = float(user_input["usage_deep"])
-
-            # Parse intensity_factor
-            if (
-                user_input.get("intensity_low")
-                or user_input.get("intensity_medium")
-                or user_input.get("intensity_high")
-                or user_input.get("intensity_max")
-            ):
-                intensity_factor = {}
-                if user_input.get("intensity_low"):
-                    intensity_factor["low"] = float(user_input["intensity_low"])
-                if user_input.get("intensity_medium"):
-                    intensity_factor["medium"] = float(user_input["intensity_medium"])
-                if user_input.get("intensity_high"):
-                    intensity_factor["high"] = float(user_input["intensity_high"])
-                if user_input.get("intensity_max"):
-                    intensity_factor["max"] = float(user_input["intensity_max"])
-
-            wash_volume = user_input.get("wash_volume_ml")
-            if wash_volume:
-                wash_volume = float(wash_volume)
-
-            updates, clear_keys = _mop_settings_updates(
-                usage_ml_per_m2=usage_ml_per_m2,
-                intensity_factor=intensity_factor,
-                wash_volume_ml=wash_volume,
-            )
-            return await self._async_apply_device_updates(updates, clear_keys)
-
-        def _field(key: str, suggested: Any) -> vol.Optional:
-            return vol.Optional(key, description={"suggested_value": suggested})
-
-        # Get current settings or defaults
-        current_usage = current.get("usage_ml_per_m2") or DEFAULT_USAGE_PER_M2
-        current_intensity = current.get("intensity_factor") or DEFAULT_INTENSITY_FACTOR
-        current_wash = current.get("wash_volume_ml") or DEFAULT_WASH_VOLUME_ML
-
-        schema_dict: dict[Any, Any] = {
-            _field("usage_fast", current_usage.get("fast", DEFAULT_USAGE_PER_M2["fast"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1,
-                    max=20,
-                    step=0.5,
-                    unit_of_measurement="mL/m²",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("usage_standard", current_usage.get("standard", DEFAULT_USAGE_PER_M2["standard"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1,
-                    max=20,
-                    step=0.5,
-                    unit_of_measurement="mL/m²",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("usage_deep", current_usage.get("deep", DEFAULT_USAGE_PER_M2["deep"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1,
-                    max=30,
-                    step=0.5,
-                    unit_of_measurement="mL/m²",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("intensity_low", current_intensity.get("low", DEFAULT_INTENSITY_FACTOR["low"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.1,
-                    max=2.0,
-                    step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("intensity_medium", current_intensity.get("medium", DEFAULT_INTENSITY_FACTOR["medium"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.1,
-                    max=2.0,
-                    step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("intensity_high", current_intensity.get("high", DEFAULT_INTENSITY_FACTOR["high"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.1,
-                    max=2.0,
-                    step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("intensity_max", current_intensity.get("max", DEFAULT_INTENSITY_FACTOR["max"])): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.1,
-                    max=2.0,
-                    step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-            _field("wash_volume_ml", current_wash): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=50,
-                    max=500,
-                    step=10,
-                    unit_of_measurement="mL",
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            ),
-        }
-
-        return self.async_show_form(
-            step_id="edit_mop_settings",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={"entity_id": self._target_entity_id or ""},
         )

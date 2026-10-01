@@ -7,7 +7,7 @@ DOMAIN = "vacuum_water_level"
 # other users' installs of the original ha_vacuum_water_monitor project).
 # Used once, at setup, to migrate any existing storage/config data forward.
 LEGACY_DOMAIN = "ha_vacuum_water_monitor"
-VERSION = "5.5.1"  # informational only; keep in sync with manifest.json
+VERSION = "5.6.0"  # informational only; keep in sync with manifest.json
 MANUFACTURER = "HA Tools"
 MODEL = "Vacuum water level"
 
@@ -23,6 +23,8 @@ DEFAULT_TICK_INTERVAL_SECONDS = 60
 DATA_STORAGE = "storage"
 DATA_TICK_UNSUB = "tick_unsub"
 DATA_TICK_TASK = "tick_task"
+DATA_DOCK_ERROR_UNSUB = "dock_error_unsub"
+DATA_DOCK_ERROR_ENTITIES = "dock_error_entities"
 
 STORAGE_KEY = DOMAIN
 STORAGE_VERSION = 1
